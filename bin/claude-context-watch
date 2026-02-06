@@ -1,0 +1,460 @@
+#!/bin/bash
+# Claude Context Watch - Real-time context window monitor for Claude Code
+# https://github.com/anthropics/claude-context-watch
+#
+# Usage:
+#   claude-context-watch           # Monitor current session
+#   claude-context-watch -s        # Select session first
+#   claude-context-watch --setup   # Configure StatusLine
+
+VERSION="1.0.0"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LIB_DIR="${SCRIPT_DIR}/../lib"
+
+# Try to load from installed location or local development
+if [ -f "$LIB_DIR/platform.sh" ]; then
+    source "$LIB_DIR/platform.sh"
+elif [ -f "/usr/local/share/claude-context-watch/platform.sh" ]; then
+    source "/usr/local/share/claude-context-watch/platform.sh"
+elif [ -f "${HOMEBREW_PREFIX:-/opt/homebrew}/share/claude-context-watch/platform.sh" ]; then
+    source "${HOMEBREW_PREFIX:-/opt/homebrew}/share/claude-context-watch/platform.sh"
+else
+    # Inline minimal platform detection
+    PLATFORM=$(uname -s | tr '[:upper:]' '[:lower:]')
+    [ "$PLATFORM" = "darwin" ] && PLATFORM="macos"
+    md5_hash() {
+        case "$PLATFORM" in
+            macos) md5 -q "$1" 2>/dev/null ;;
+            *) md5sum "$1" 2>/dev/null | cut -d' ' -f1 ;;
+        esac
+    }
+    file_mtime() {
+        case "$PLATFORM" in
+            macos) stat -f '%m' "$1" 2>/dev/null ;;
+            *) stat --format='%Y' "$1" 2>/dev/null ;;
+        esac
+    }
+    format_date() {
+        case "$PLATFORM" in
+            macos) date -r "$1" "+${2:-%m/%d %H:%M}" 2>/dev/null ;;
+            *) date -d "@$1" "+${2:-%m/%d %H:%M}" 2>/dev/null ;;
+        esac
+    }
+    find_files_with_mtime() {
+        case "$PLATFORM" in
+            macos) find "$1" -name "$2" -type f -exec stat -f '%m %N' {} \; 2>/dev/null | sort -rn | head -"${3:-15}" ;;
+            *) find "$1" -name "$2" -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -"${3:-15}" ;;
+        esac
+    }
+fi
+
+CONTEXT_FILE="${CLAUDE_CONTEXT_FILE:-/tmp/claude-context.json}"
+CONTEXT_WINDOW=200000
+
+# Icons
+ICON_FULL='⛁'
+ICON_EMPTY='⛶'
+ICON_BUFFER='⛝'
+
+# Print line with clear to end
+pl() {
+    printf "%b\033[K\n" "$1"
+}
+
+# Get gradient color based on position (0-100)
+get_gradient_color() {
+    local pos=$1
+    local r g b
+    if [ "$pos" -lt 50 ]; then
+        r=$((pos * 255 / 50))
+        g=255
+        b=50
+    else
+        r=255
+        g=$(( (100 - pos) * 255 / 50 ))
+        b=50
+    fi
+    printf "\033[38;2;%d;%d;%dm" $r $g $b
+}
+
+# Draw 10x10 grid visualization
+draw() {
+    local percent=$1
+    for row in $(seq 0 9); do
+        local line="     "
+        for col in $(seq 0 9); do
+            local cell=$((row * 10 + col))
+            if [ "$cell" -lt "$percent" ]; then
+                local color
+                color=$(get_gradient_color $cell)
+                line+="${color}${ICON_FULL}\033[0m "
+            elif [ "$cell" -ge 83 ]; then
+                line+="\033[38;2;60;60;80m${ICON_BUFFER}\033[0m "
+            else
+                line+="\033[38;2;50;50;60m${ICON_EMPTY}\033[0m "
+            fi
+        done
+        case $row in
+            0) line+="  \033[1;37mContext Monitor\033[0m";;
+            2) line+="  \033[38;2;0;255;50m${ICON_FULL}\033[0m \033[0;90mLow\033[0m";;
+            3) line+="  \033[38;2;255;255;50m${ICON_FULL}\033[0m \033[0;90mMid\033[0m";;
+            4) line+="  \033[38;2;255;50;50m${ICON_FULL}\033[0m \033[0;90mHigh\033[0m";;
+            6) line+="  \033[38;2;50;50;60m${ICON_EMPTY}\033[0m \033[0;90mFree\033[0m";;
+            7) line+="  \033[38;2;60;60;80m${ICON_BUFFER}\033[0m \033[0;90mBuffer\033[0m";;
+        esac
+        pl "$line"
+    done
+}
+
+# Render the full display
+render() {
+    tput cup 0 0
+    tput civis
+
+    if [ ! -f "$CONTEXT_FILE" ]; then
+        pl ""
+        pl "  \033[0;33mWaiting for Claude Code...\033[0m"
+        pl "  \033[0;90m(Send a message to start)\033[0m"
+        pl ""
+        pl "  \033[0;90mMake sure StatusLine is configured:\033[0m"
+        pl "  \033[0;36mclaude-context-watch --setup\033[0m"
+        for i in $(seq 1 18); do pl ""; done
+        return
+    fi
+
+    local data
+    data=$(cat "$CONTEXT_FILE" 2>/dev/null)
+
+    local percent model session total_input cost timestamp cache_read
+    percent=$(printf "%.0f" "$(echo "$data" | jq -r '.context_window.used_percentage // 0')" 2>/dev/null || echo "0")
+    model=$(echo "$data" | jq -r '.model.display_name // "Claude"')
+    session=$(echo "$data" | jq -r '.session_id // "unknown"')
+    total_input=$(echo "$data" | jq -r '.context_window.total_input_tokens // 0')
+    cost=$(echo "$data" | jq -r '.cost.total_cost_usd // 0')
+    timestamp=$(echo "$data" | jq -r '.timestamp // ""')
+    cache_read=$(echo "$data" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0')
+
+    local total_k=$((total_input / 1000))
+    local context_k=$((CONTEXT_WINDOW / 1000))
+    local cache_k=$((cache_read / 1000))
+
+    pl ""
+    pl "  \033[1;36m╔════════════════════════════════════════════════╗\033[0m"
+    pl "  \033[1;36m║     🔍 Claude Context Monitor v${VERSION}          ║\033[0m"
+    pl "  \033[1;36m╚════════════════════════════════════════════════╝\033[0m"
+    pl ""
+    pl "  \033[0;90mModel:\033[0m ${model}"
+    pl "  \033[0;90mSession:\033[0m ${session:0:8}..."
+    pl ""
+    pl "  \033[1mContext Usage\033[0m"
+
+    draw "$percent"
+
+    pl ""
+    pl "  \033[1;37m${total_k}k / ${context_k}k tokens\033[0m  \033[0;35m(${percent}%)\033[0m"
+
+    if [ "$cache_k" -gt 0 ]; then
+        pl "  \033[0;90mCache read: ${cache_k}k tokens\033[0m"
+    else
+        pl ""
+    fi
+
+    if [ "$percent" -ge 80 ]; then
+        pl "  \033[0;31m⚠️  Context nearly full!\033[0m"
+    elif [ "$percent" -ge 60 ]; then
+        pl "  \033[0;33m📊 Moderate usage\033[0m"
+    else
+        pl "  \033[0;32m✅ Healthy\033[0m"
+    fi
+
+    pl ""
+    printf "  \033[0;90mCost: \$%.4f\033[0m\033[K\n" "$cost"
+    pl "  \033[0;90mUpdated: ${timestamp}\033[0m"
+    pl "  \033[0;90mCtrl+C to exit | -s to select session\033[0m"
+    pl ""
+}
+
+# Extract first meaningful message from session file
+get_session_hint() {
+    local path="$1"
+    local hint
+
+    # Try user message first
+    hint=$(head -300 "$path" 2>/dev/null | \
+           jq -r 'select(.type=="user") | .message.content[]? | select(.type=="text") | .text' 2>/dev/null | \
+           grep -v '^\[' | grep -v '^<' | grep -v '^$' | head -1 | cut -c1-32)
+
+    # If no user message, try assistant message
+    if [ -z "$hint" ]; then
+        hint=$(head -300 "$path" 2>/dev/null | \
+               jq -r 'select(.type=="assistant") | .message.content[]? | select(.type=="text") | .text' 2>/dev/null | \
+               grep -v '^$' | head -1 | cut -c1-32)
+    fi
+
+    echo "$hint"
+}
+
+# Format project name for display
+format_project_name() {
+    local proj="$1"
+    # Remove common prefixes and make readable
+    local clean
+    clean=$(echo "$proj" | sed -E 's/^-Users-[^-]+-dev-//' | sed -E 's/^-Users-[^-]+-//' | sed 's/^-//' | sed 's/^dev-//')
+    # If still too long, take last meaningful part
+    if [ ${#clean} -gt 18 ]; then
+        clean=$(echo "$clean" | rev | cut -d'-' -f1-2 | rev)
+    fi
+    echo "${clean:0:18}"
+}
+
+# Session selector with arrow key navigation
+select_session() {
+    local sessions=()
+    local display_lines=()
+    local selected=0
+    local total=0
+
+    # Build session list
+    while IFS= read -r line; do
+        local ts path sess proj proj_display date_str hint type_icon
+        ts=$(echo "$line" | cut -d' ' -f1 | cut -d. -f1)
+        path=$(echo "$line" | cut -d' ' -f2-)
+        sess=$(basename "$path" .jsonl)
+        proj=$(basename "$(dirname "$path")")
+        date_str=$(format_date "$ts" '%m/%d %H:%M')
+
+        # Detect session type
+        if [[ "$proj" == "subagents" ]]; then
+            type_icon="🤖"
+            proj_display="subagent"
+        else
+            type_icon="💬"
+            proj_display=$(format_project_name "$proj")
+        fi
+
+        # Get conversation hint
+        hint=$(get_session_hint "$path")
+        if [ -n "$hint" ]; then
+            hint="\"$hint...\""
+        fi
+
+        sessions+=("$path")
+        display_lines+=("$type_icon $(printf '%-11s' "$date_str") $(printf '%-18s' "$proj_display") $hint")
+        total=$((total + 1))
+    done < <(find_files_with_mtime ~/.claude/projects "*.jsonl" 15)
+
+    if [ $total -eq 0 ]; then
+        echo "  No sessions found."
+        return 1
+    fi
+
+    # Hide cursor
+    tput civis
+
+    # Draw menu function
+    draw_menu() {
+        tput cup 0 0
+        printf "\033[1;36m📋 Select Session (↑↓ Navigate, Enter Select, q Quit)\033[0m\n\n"
+
+        for i in $(seq 0 $((total - 1))); do
+            if [ $i -eq $selected ]; then
+                printf "  \033[1;42;30m → %s \033[0m\033[K\n" "${display_lines[$i]}"
+            else
+                printf "  \033[0;37m   %s\033[0m\033[K\n" "${display_lines[$i]}"
+            fi
+        done
+
+        # Clear remaining lines
+        for i in $(seq 1 5); do
+            printf "\033[K\n"
+        done
+    }
+
+    # Clear screen and draw initial menu
+    clear
+    draw_menu
+
+    # Read keys
+    while true; do
+        # Read single character
+        IFS= read -rsn1 key
+
+        # Check for escape sequence (arrow keys)
+        if [[ "$key" == $'\x1b' ]]; then
+            read -rsn1 key2
+            read -rsn1 key3
+            case "$key3" in
+                'A') # Up arrow
+                    [ $selected -gt 0 ] && selected=$((selected - 1))
+                    ;;
+                'B') # Down arrow
+                    [ $selected -lt $((total - 1)) ] && selected=$((selected + 1))
+                    ;;
+            esac
+        elif [[ "$key" == "" ]]; then
+            # Enter key
+            tput cnorm
+            clear
+            printf "\033[0;32m✓ Selected: %s\033[0m\n" "$(basename "${sessions[$selected]}" .jsonl)"
+            echo "Starting monitor..."
+            sleep 0.5
+            return 0
+        elif [[ "$key" == "q" ]] || [[ "$key" == "Q" ]]; then
+            tput cnorm
+            clear
+            echo "Cancelled."
+            return 1
+        elif [[ "$key" =~ ^[0-9]$ ]]; then
+            # Number key for quick select
+            local num=$((key - 1))
+            if [ $num -ge 0 ] && [ $num -lt $total ]; then
+                selected=$num
+            fi
+        fi
+
+        draw_menu
+    done
+}
+
+# Setup StatusLine configuration
+setup_statusline() {
+    local claude_dir="${HOME}/.claude"
+    local settings_file="${claude_dir}/settings.json"
+    local writer_script="${claude_dir}/context-writer.sh"
+
+    echo ""
+    printf "\033[1;36m🔧 Claude Context Watch Setup\033[0m\n\n"
+
+    # Ensure .claude directory exists
+    mkdir -p "$claude_dir"
+
+    # Copy context-writer.sh
+    local source_writer=""
+    if [ -f "$LIB_DIR/context-writer.sh" ]; then
+        source_writer="$LIB_DIR/context-writer.sh"
+    elif [ -f "/usr/local/share/claude-context-watch/context-writer.sh" ]; then
+        source_writer="/usr/local/share/claude-context-watch/context-writer.sh"
+    elif [ -f "${HOMEBREW_PREFIX:-/opt/homebrew}/share/claude-context-watch/context-writer.sh" ]; then
+        source_writer="${HOMEBREW_PREFIX:-/opt/homebrew}/share/claude-context-watch/context-writer.sh"
+    fi
+
+    if [ -n "$source_writer" ]; then
+        cp "$source_writer" "$writer_script"
+        chmod +x "$writer_script"
+        printf "  \033[0;32m✓\033[0m Installed context-writer.sh\n"
+    else
+        printf "  \033[0;31m✗\033[0m Could not find context-writer.sh\n"
+        return 1
+    fi
+
+    # Update settings.json
+    local statusline_config='{"type":"command","command":"~/.claude/context-writer.sh"}'
+
+    if [ -f "$settings_file" ]; then
+        # Backup existing settings
+        cp "$settings_file" "${settings_file}.backup"
+
+        # Merge statusLine setting
+        local updated
+        updated=$(jq --argjson sl "$statusline_config" '.statusLine = $sl' "$settings_file" 2>/dev/null)
+
+        if [ -n "$updated" ]; then
+            echo "$updated" > "$settings_file"
+            printf "  \033[0;32m✓\033[0m Updated settings.json (backup saved)\n"
+        else
+            printf "  \033[0;31m✗\033[0m Failed to update settings.json\n"
+            return 1
+        fi
+    else
+        # Create new settings file
+        echo "{\"statusLine\":$statusline_config}" | jq '.' > "$settings_file"
+        printf "  \033[0;32m✓\033[0m Created settings.json\n"
+    fi
+
+    echo ""
+    printf "\033[0;32m✅ Setup complete!\033[0m\n\n"
+    echo "Next steps:"
+    echo "  1. Restart Claude Code"
+    echo "  2. Send a message to activate monitoring"
+    echo "  3. Run 'claude-context-watch' in another terminal"
+    echo ""
+}
+
+# Show help
+show_help() {
+    cat << EOF
+Claude Context Watch v${VERSION}
+Real-time context window monitor for Claude Code
+
+Usage:
+  claude-context-watch           Monitor context usage (TUI)
+  claude-context-watch -s        Select session first
+  claude-context-watch --setup   Configure StatusLine
+  claude-context-watch -h        Show this help
+
+Options:
+  -s, --select    Select from available sessions
+  --setup         Configure Claude Code StatusLine
+  -h, --help      Show help
+  -v, --version   Show version
+
+Environment:
+  CLAUDE_CONTEXT_FILE   Override context file path
+                        (default: /tmp/claude-context.json)
+
+For more info: https://github.com/anthropics/claude-context-watch
+EOF
+}
+
+# Cleanup on exit
+cleanup() {
+    tput cnorm 2>/dev/null
+    tput sgr0 2>/dev/null
+    printf "\n"
+    exit 0
+}
+
+trap cleanup EXIT INT TERM
+
+# Main
+case "${1:-}" in
+    -s|--select)
+        select_session || exit 0
+        ;;
+    --setup)
+        setup_statusline
+        exit 0
+        ;;
+    -h|--help)
+        show_help
+        exit 0
+        ;;
+    -v|--version)
+        echo "claude-context-watch v${VERSION}"
+        exit 0
+        ;;
+esac
+
+# Check for jq
+if ! command -v jq >/dev/null 2>&1; then
+    echo "Error: jq is required but not installed."
+    echo "Install with: brew install jq (macOS) or apt install jq (Linux)"
+    exit 1
+fi
+
+# Start monitoring
+clear
+last_hash=""
+
+while true; do
+    if [ -f "$CONTEXT_FILE" ]; then
+        hash=$(md5_hash "$CONTEXT_FILE")
+        if [ "$hash" != "$last_hash" ]; then
+            render
+            last_hash=$hash
+        fi
+    else
+        render
+    fi
+    sleep 0.3
+done
