@@ -1,90 +1,90 @@
 # Claude Context Watch
 
-Real-time context window monitor for Claude Code using the StatusLine feature.
+Claude Code의 컨텍스트 윈도우 사용량을 실시간으로 모니터링하는 CLI 도구입니다.
 
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue)
 ![License](https://img.shields.io/badge/license-MIT-green)
 ![Version](https://img.shields.io/badge/version-1.0.0-brightgreen)
 
-## Features
+## 주요 기능
 
-- **Real-time monitoring** - Updates every 300ms via StatusLine
-- **Visual grid display** - 10x10 grid with color-coded usage
-- **Complete metrics** - Tokens, cache, cost, percentage
-- **Cross-platform** - macOS and Linux support
-- **Easy setup** - One command configuration
+- **실시간 모니터링** - StatusLine을 통해 300ms마다 업데이트
+- **시각적 그리드 표시** - 색상으로 구분된 10x10 그리드
+- **완전한 메트릭** - 토큰, 캐시, 비용, 사용률 표시
+- **크로스 플랫폼** - macOS 및 Linux 지원
+- **간편한 설정** - 한 번의 명령으로 구성
 
-## Prerequisites
+## 사전 요구 사항
 
-- [Claude Code](https://github.com/anthropics/claude-code) CLI installed
-- `jq` command-line JSON processor
+- [Claude Code](https://github.com/anthropics/claude-code) CLI 설치
+- `jq` JSON 프로세서
 - Bash 4.0+
 
-## Installation
+## 설치
 
 ### Homebrew (macOS)
 
 ```bash
-brew tap anthropics/claude-context-watch
+brew tap InjunH/claude-context-watch
 brew install claude-context-watch
 claude-context-watch --setup
 ```
 
-### Manual Installation
+### 수동 설치
 
 ```bash
-git clone https://github.com/anthropics/claude-context-watch.git
+git clone https://github.com/InjunH/claude-context-watch.git
 cd claude-context-watch
 ./install.sh
 ```
 
-### Quick Install (curl)
+### 빠른 설치 (curl)
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/anthropics/claude-context-watch/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/InjunH/claude-context-watch/main/install.sh | bash
 ```
 
-## Usage
+## 사용법
 
 ```bash
-# Start monitoring (TUI)
+# 모니터링 시작 (TUI)
 claude-context-watch
 
-# Select session from list
+# 세션 목록에서 선택
 claude-context-watch -s
 
-# Configure/reconfigure StatusLine
+# StatusLine 설정/재설정
 claude-context-watch --setup
 
-# Show help
+# 도움말 표시
 claude-context-watch -h
 ```
 
-## How It Works
+## 작동 원리
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
 │  Claude Code    │────▶│  StatusLine      │────▶│  ~/.claude/     │
-│  (300ms cycle)  │     │  context-writer  │     │  context.json   │
+│  (300ms 주기)   │     │  context-writer  │     │  context.json   │
 └─────────────────┘     └──────────────────┘     └────────┬────────┘
                                │                          │
                                ▼                          │
                         ┌──────────────────┐              │
-                        │  Terminal status │              │
-                        │  bar display     │              │
+                        │  터미널 하단     │              │
+                        │  상태바 표시     │              │
                         └──────────────────┘              │
                                                           │
                         ┌──────────────────┐              │
                         │  claude-context  │◀─────────────┘
-                        │  -watch (TUI)    │  (0.3s read)
+                        │  -watch (TUI)    │  (0.3초 읽기)
                         └──────────────────┘
 ```
 
-1. **Claude Code** sends context data to StatusLine every ~300ms
-2. **context-writer.sh** receives the data, saves to file, outputs status text
-3. **claude-context-watch** reads the file and displays the TUI monitor
+1. **Claude Code**가 ~300ms마다 StatusLine으로 컨텍스트 데이터 전송
+2. **context-writer.sh**가 데이터를 받아 파일에 저장하고 상태 텍스트 출력
+3. **claude-context-watch**가 파일을 읽어 TUI 모니터에 표시
 
-## Display
+## 화면 표시
 
 ```
   ╔════════════════════════════════════════════════╗
@@ -97,59 +97,59 @@ claude-context-watch -h
   Context Usage
      ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁   Context Monitor
      ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁
-     ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁   ⛁ Low
-     ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁   ⛁ Mid
-     ⛁ ⛁ ⛁ ⛁ ⛁ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ High
+     ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁   ⛁ 낮음
+     ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁ ⛁   ⛁ 중간
+     ⛁ ⛁ ⛁ ⛁ ⛁ ⛶ ⛶ ⛶ ⛶ ⛶   ⛁ 높음
      ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶
-     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛶ Free
-     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛝ Buffer
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛶ 여유
+     ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶ ⛶   ⛝ 버퍼
      ⛶ ⛶ ⛶ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝
      ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝ ⛝
 
   45k / 200k tokens  (45%)
   Cache read: 12k tokens
 
-  ✅ Healthy
+  ✅ 양호
 
   Cost: $0.0142
   Updated: 2025-02-05T10:30:00
-  Ctrl+C to exit | -s to select session
+  Ctrl+C 종료 | -s 세션 선택
 ```
 
-## StatusLine Output
+## StatusLine 출력
 
-When configured, Claude Code's terminal shows a compact status:
+설정 후 Claude Code 터미널에 간략한 상태가 표시됩니다:
 
 ```
 🟢 45.2k/200k (22%) 📦12.5k $0.01
 ```
 
-- 🟢/🟡/🟠/🔴 - Usage indicator
-- Token usage / Total
-- Cache read amount (if significant)
-- Session cost
+- 🟢/🟡/🟠/🔴 - 사용량 표시기
+- 토큰 사용량 / 전체
+- 캐시 읽기량 (있는 경우)
+- 세션 비용
 
-## Status Indicators
+## 상태 표시기
 
-| Usage | Status | Indicator |
-|-------|--------|-----------|
-| < 60% | Healthy | 🟢 |
-| 60-80% | Moderate | 🟡 |
-| 80-90% | High | 🟠 |
-| > 90% | Critical | 🔴 |
+| 사용량 | 상태 | 표시기 |
+|--------|------|--------|
+| < 60% | 양호 | 🟢 |
+| 60-80% | 보통 | 🟡 |
+| 80-90% | 높음 | 🟠 |
+| > 90% | 위험 | 🔴 |
 
-## Configuration
+## 설정
 
-### Environment Variables
+### 환경 변수
 
 ```bash
-# Custom context file location
+# 커스텀 컨텍스트 파일 경로
 export CLAUDE_CONTEXT_FILE="/path/to/context.json"
 ```
 
-### Manual StatusLine Setup
+### 수동 StatusLine 설정
 
-If `--setup` doesn't work, manually edit `~/.claude/settings.json`:
+`--setup`이 작동하지 않으면 `~/.claude/settings.json`을 직접 편집하세요:
 
 ```json
 {
@@ -160,65 +160,65 @@ If `--setup` doesn't work, manually edit `~/.claude/settings.json`:
 }
 ```
 
-## Uninstallation
+## 제거
 
 ```bash
 ./uninstall.sh
 ```
 
-Or manually:
+또는 수동으로:
 
 ```bash
 sudo rm /usr/local/bin/claude-context-watch
 sudo rm -rf /usr/local/share/claude-context-watch
 rm ~/.claude/context-writer.sh
-# Optionally remove statusLine from ~/.claude/settings.json
+# 선택적으로 ~/.claude/settings.json에서 statusLine 제거
 ```
 
-## Troubleshooting
+## 문제 해결
 
 ### "Waiting for Claude Code..."
 
-1. Ensure StatusLine is configured: `claude-context-watch --setup`
-2. Restart Claude Code
-3. Send a message to start the session
+1. StatusLine이 설정되었는지 확인: `claude-context-watch --setup`
+2. Claude Code 재시작
+3. 메시지를 보내 세션 시작
 
-### StatusLine not showing
+### StatusLine이 표시되지 않음
 
-1. Check `~/.claude/settings.json` has the statusLine config
-2. Ensure `~/.claude/context-writer.sh` exists and is executable
-3. Restart Claude Code
+1. `~/.claude/settings.json`에 statusLine 설정이 있는지 확인
+2. `~/.claude/context-writer.sh`가 존재하고 실행 가능한지 확인
+3. Claude Code 재시작
 
-### Permission denied
+### 권한 거부
 
 ```bash
 chmod +x ~/.claude/context-writer.sh
 ```
 
-## Project Structure
+## 프로젝트 구조
 
 ```
 claude-context-watch/
 ├── bin/
-│   └── claude-context-watch      # Main TUI monitor
+│   └── claude-context-watch      # 메인 TUI 모니터
 ├── lib/
-│   ├── context-writer.sh         # StatusLine script
-│   └── platform.sh               # Cross-platform utilities
-├── install.sh                    # Installation script
-├── uninstall.sh                  # Uninstallation script
+│   ├── context-writer.sh         # StatusLine 스크립트
+│   └── platform.sh               # 크로스 플랫폼 유틸리티
+├── install.sh                    # 설치 스크립트
+├── uninstall.sh                  # 제거 스크립트
 ├── Formula/
 │   └── claude-context-watch.rb   # Homebrew formula
 └── README.md
 ```
 
-## License
+## 라이선스
 
-MIT License - see [LICENSE](LICENSE) file for details.
+MIT 라이선스 - 자세한 내용은 [LICENSE](LICENSE) 파일을 참조하세요.
 
-## Contributing
+## 기여
 
-Contributions are welcome! Please feel free to submit a Pull Request.
+기여를 환영합니다! Pull Request를 자유롭게 제출해 주세요.
 
-## Related
+## 관련 링크
 
-- [Claude Code](https://github.com/anthropics/claude-code) - The official CLI for Claude
+- [Claude Code](https://github.com/anthropics/claude-code) - Claude 공식 CLI
