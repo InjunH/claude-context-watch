@@ -123,7 +123,9 @@ render() {
     tput cup 0 0
     tput civis
 
-    if [ ! -f "$CONTEXT_FILE" ]; then
+    local target_file="${CURRENT_CONTEXT_FILE:-$CONTEXT_FILE}"
+
+    if [ ! -f "$target_file" ]; then
         pl ""
         pl "  \033[0;33mWaiting for Claude Code...\033[0m"
         pl "  \033[0;90m(Send a message to start)\033[0m"
@@ -135,7 +137,7 @@ render() {
     fi
 
     local data
-    data=$(cat "$CONTEXT_FILE" 2>/dev/null)
+    data=$(cat "$target_file" 2>/dev/null)
 
     local percent model session total_input cost timestamp cache_read
     read -r percent model session total_input cost timestamp cache_read < <(
@@ -200,7 +202,7 @@ render() {
     pl ""
     printf "  \033[0;90mCost: \$%.4f\033[0m\033[K\n" "$cost"
     pl "  \033[0;90mUpdated: ${timestamp}\033[0m"
-    pl "  \033[0;90mCtrl+C to exit | -s to select session\033[0m"
+    pl "  \033[0;90m[s] 세션 전환 | [q] 종료\033[0m"
     pl ""
 }
 
@@ -328,12 +330,13 @@ select_session() {
                     ;;
             esac
         elif [[ "$key" == "" ]]; then
-            # Enter key
+            # Enter key - return selected session ID
             tput cnorm
+            local selected_session
+            selected_session=$(basename "${sessions[$selected]}" .jsonl)
+            # Store selected session ID in global variable
+            SELECTED_SESSION_ID="$selected_session"
             clear
-            printf "\033[0;32m✓ Selected: %s\033[0m\n" "$(basename "${sessions[$selected]}" .jsonl)"
-            echo "Starting monitor..."
-            sleep 0.5
             return 0
         elif [[ "$key" == "q" ]] || [[ "$key" == "Q" ]]; then
             tput cnorm
@@ -444,11 +447,15 @@ Options:
   -h, --help      Show help
   -v, --version   Show version
 
+Keyboard Shortcuts (during monitoring):
+  s               Switch to another session
+  q               Quit
+
 Environment:
   CLAUDE_CONTEXT_FILE   Override context file path
                         (default: ~/.claude/context.json)
 
-For more info: https://github.com/anthropics/claude-context-watch
+For more info: https://github.com/InjunH/claude-context-watch
 EOF
 }
 
@@ -488,13 +495,50 @@ if ! command -v jq >/dev/null 2>&1; then
     exit 1
 fi
 
+# Get context file for a session
+get_session_context_file() {
+    local session_id="$1"
+    if [ -n "$session_id" ]; then
+        local session_file="${HOME}/.claude/contexts/${session_id}.json"
+        if [ -f "$session_file" ]; then
+            echo "$session_file"
+            return
+        fi
+    fi
+    echo "$CONTEXT_FILE"
+}
+
+# Global variable for selected session
+SELECTED_SESSION_ID=""
+CURRENT_CONTEXT_FILE="$CONTEXT_FILE"
+
 # Start monitoring
 clear
 last_mtime=""
 
 while true; do
-    if [ -f "$CONTEXT_FILE" ]; then
-        mtime=$(file_mtime "$CONTEXT_FILE")
+    # Check for key input (non-blocking)
+    if read -rsn1 -t 0.3 key 2>/dev/null; then
+        case "$key" in
+            s|S)
+                # Switch session
+                tput cnorm
+                if select_session; then
+                    CURRENT_CONTEXT_FILE=$(get_session_context_file "$SELECTED_SESSION_ID")
+                    last_mtime=""
+                    clear
+                fi
+                tput civis
+                ;;
+            q|Q)
+                # Quit
+                cleanup
+                ;;
+        esac
+    fi
+
+    if [ -f "$CURRENT_CONTEXT_FILE" ]; then
+        mtime=$(file_mtime "$CURRENT_CONTEXT_FILE")
         if [ "$mtime" != "$last_mtime" ]; then
             render
             last_mtime=$mtime
@@ -502,5 +546,4 @@ while true; do
     else
         render
     fi
-    sleep 0.3
 done

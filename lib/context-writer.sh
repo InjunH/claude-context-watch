@@ -71,10 +71,26 @@ main() {
     local timestamp
     timestamp=$(date '+%Y-%m-%dT%H:%M:%S')
 
+    # Extract session_id for per-session context file
+    local session_id
+    session_id=$(echo "$input" | jq -r '.session_id // ""' 2>/dev/null)
+
     # Write with secure permissions (owner read/write only)
     umask 077
+
+    # Save to main context file (for current active session)
     echo "$input" | jq --arg ts "$timestamp" '. + {timestamp: $ts}' > "$CONTEXT_FILE" 2>/dev/null || true
     chmod 600 "$CONTEXT_FILE" 2>/dev/null || true
+
+    # Also save per-session context file (for session switching)
+    if [ -n "$session_id" ]; then
+        local sessions_dir="${HOME}/.claude/contexts"
+        mkdir -p "$sessions_dir" 2>/dev/null
+        chmod 700 "$sessions_dir" 2>/dev/null || true
+        local session_file="${sessions_dir}/${session_id}.json"
+        echo "$input" | jq --arg ts "$timestamp" '. + {timestamp: $ts}' > "$session_file" 2>/dev/null || true
+        chmod 600 "$session_file" 2>/dev/null || true
+    fi
 
     # Extract all values in a single jq call
     local used_pct total_input context_size cost model_name cache_creation cache_read

@@ -50,7 +50,7 @@ curl -fsSL https://raw.githubusercontent.com/InjunH/claude-context-watch/main/in
 # 모니터링 시작 (TUI)
 claude-context-watch
 
-# 세션 목록에서 선택
+# 세션 목록에서 선택 후 모니터링
 claude-context-watch -s
 
 # StatusLine 설정/재설정
@@ -59,6 +59,13 @@ claude-context-watch --setup
 # 도움말 표시
 claude-context-watch -h
 ```
+
+### 모니터링 중 단축키
+
+| 키 | 동작 |
+|----|------|
+| `s` | 다른 세션으로 전환 |
+| `q` | 종료 |
 
 ## 작동 원리
 
