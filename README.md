@@ -64,7 +64,7 @@ claude-context-watch -h
 
 ```
 ┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
-│  Claude Code    │────▶│  StatusLine      │────▶│  /tmp/claude-   │
+│  Claude Code    │────▶│  StatusLine      │────▶│  ~/.claude/     │
 │  (300ms cycle)  │     │  context-writer  │     │  context.json   │
 └─────────────────┘     └──────────────────┘     └────────┬────────┘
                                │                          │

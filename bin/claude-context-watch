@@ -48,7 +48,7 @@ else
     }
 fi
 
-CONTEXT_FILE="${CLAUDE_CONTEXT_FILE:-/tmp/claude-context.json}"
+CONTEXT_FILE="${CLAUDE_CONTEXT_FILE:-${HOME}/.claude/context.json}"
 CONTEXT_WINDOW=200000
 
 # Icons
@@ -64,25 +64,37 @@ pl() {
 # Get gradient color based on position (0-100)
 get_gradient_color() {
     local pos=$1
-    local r g b
-    if [ "$pos" -lt 50 ]; then
-        r=$((pos * 255 / 50))
-        g=255
-        b=50
+    # True color 지원 확인
+    if [[ "$COLORTERM" == "truecolor" ]] || [[ "$COLORTERM" == "24bit" ]] || [[ "$TERM" == *-256color ]]; then
+        local r g b
+        if [ "$pos" -lt 50 ]; then
+            r=$((pos * 255 / 50))
+            g=255
+            b=50
+        else
+            r=255
+            g=$(( (100 - pos) * 255 / 50 ))
+            b=50
+        fi
+        printf "\033[38;2;%d;%d;%dm" $r $g $b
     else
-        r=255
-        g=$(( (100 - pos) * 255 / 50 ))
-        b=50
+        # 16색 fallback
+        if [ "$pos" -lt 33 ]; then
+            printf "\033[32m"  # Green
+        elif [ "$pos" -lt 66 ]; then
+            printf "\033[33m"  # Yellow
+        else
+            printf "\033[31m"  # Red
+        fi
     fi
-    printf "\033[38;2;%d;%d;%dm" $r $g $b
 }
 
 # Draw 10x10 grid visualization
 draw() {
     local percent=$1
-    for row in $(seq 0 9); do
+    for ((row=0; row<=9; row++)); do
         local line="     "
-        for col in $(seq 0 9); do
+        for ((col=0; col<=9; col++)); do
             local cell=$((row * 10 + col))
             if [ "$cell" -lt "$percent" ]; then
                 local color
@@ -126,13 +138,31 @@ render() {
     data=$(cat "$CONTEXT_FILE" 2>/dev/null)
 
     local percent model session total_input cost timestamp cache_read
-    percent=$(printf "%.0f" "$(echo "$data" | jq -r '.context_window.used_percentage // 0')" 2>/dev/null || echo "0")
-    model=$(echo "$data" | jq -r '.model.display_name // "Claude"')
-    session=$(echo "$data" | jq -r '.session_id // "unknown"')
-    total_input=$(echo "$data" | jq -r '.context_window.total_input_tokens // 0')
-    cost=$(echo "$data" | jq -r '.cost.total_cost_usd // 0')
-    timestamp=$(echo "$data" | jq -r '.timestamp // ""')
-    cache_read=$(echo "$data" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0')
+    read -r percent model session total_input cost timestamp cache_read < <(
+        echo "$data" | jq -r '[
+            (.context_window.used_percentage // 0 | floor),
+            (.model.display_name // "Claude"),
+            (.session_id // "unknown"),
+            (.context_window.total_input_tokens // 0),
+            (.cost.total_cost_usd // 0),
+            (.timestamp // ""),
+            (.context_window.current_usage.cache_read_input_tokens // 0)
+        ] | @tsv' 2>/dev/null
+    ) || { percent=0; model="Claude"; session="unknown"; total_input=0; cost=0; timestamp=""; cache_read=0; }
+
+    # Validate numeric values
+    if ! [[ "$percent" =~ ^[0-9]+$ ]]; then
+        percent=0
+    fi
+    if ! [[ "$total_input" =~ ^[0-9]+$ ]]; then
+        total_input=0
+    fi
+    if ! [[ "$cache_read" =~ ^[0-9]+$ ]]; then
+        cache_read=0
+    fi
+    if ! [[ "$cost" =~ ^[0-9]+\.?[0-9]*$ ]]; then
+        cost=0
+    fi
 
     local total_k=$((total_input / 1000))
     local context_k=$((CONTEXT_WINDOW / 1000))
@@ -209,6 +239,12 @@ format_project_name() {
 
 # Session selector with arrow key navigation
 select_session() {
+    if [ ! -d ~/.claude/projects ]; then
+        echo "  No Claude sessions found."
+        echo "  Start Claude Code first to create sessions."
+        return 1
+    fi
+
     local sessions=()
     local display_lines=()
     local selected=0
@@ -281,8 +317,8 @@ select_session() {
 
         # Check for escape sequence (arrow keys)
         if [[ "$key" == $'\x1b' ]]; then
-            read -rsn1 key2
-            read -rsn1 key3
+            read -rsn1 -t 0.1 key2 || { continue; }  # ESC만 누르면 무시
+            read -rsn1 -t 0.1 key3 || { continue; }
             case "$key3" in
                 'A') # Up arrow
                     [ $selected -gt 0 ] && selected=$((selected - 1))
@@ -344,6 +380,7 @@ setup_statusline() {
         printf "  \033[0;32m✓\033[0m Installed context-writer.sh\n"
     else
         printf "  \033[0;31m✗\033[0m Could not find context-writer.sh\n"
+        printf "      Try reinstalling: ./install.sh\n"
         return 1
     fi
 
@@ -359,10 +396,19 @@ setup_statusline() {
         updated=$(jq --argjson sl "$statusline_config" '.statusLine = $sl' "$settings_file" 2>/dev/null)
 
         if [ -n "$updated" ]; then
-            echo "$updated" > "$settings_file"
-            printf "  \033[0;32m✓\033[0m Updated settings.json (backup saved)\n"
+            temp_file=$(mktemp)
+            if echo "$updated" > "$temp_file" && [ -s "$temp_file" ]; then
+                mv "$temp_file" "$settings_file"
+                printf "  \033[0;32m✓\033[0m Updated settings.json (backup saved)\n"
+            else
+                rm -f "$temp_file"
+                printf "  \033[0;31m✗\033[0m Failed to update settings.json\n"
+                printf "      Check permissions: ls -la ~/.claude/settings.json\n"
+                return 1
+            fi
         else
             printf "  \033[0;31m✗\033[0m Failed to update settings.json\n"
+            printf "      Check permissions: ls -la ~/.claude/settings.json\n"
             return 1
         fi
     else
@@ -400,7 +446,7 @@ Options:
 
 Environment:
   CLAUDE_CONTEXT_FILE   Override context file path
-                        (default: /tmp/claude-context.json)
+                        (default: ~/.claude/context.json)
 
 For more info: https://github.com/anthropics/claude-context-watch
 EOF
@@ -444,14 +490,14 @@ fi
 
 # Start monitoring
 clear
-last_hash=""
+last_mtime=""
 
 while true; do
     if [ -f "$CONTEXT_FILE" ]; then
-        hash=$(md5_hash "$CONTEXT_FILE")
-        if [ "$hash" != "$last_hash" ]; then
+        mtime=$(file_mtime "$CONTEXT_FILE")
+        if [ "$mtime" != "$last_mtime" ]; then
             render
-            last_hash=$hash
+            last_mtime=$mtime
         fi
     else
         render

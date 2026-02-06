@@ -67,7 +67,11 @@ remove_statusline_config() {
     fi
 
     printf "Remove StatusLine configuration from settings.json? [y/N] "
-    read -r response
+    if [ -t 0 ]; then
+        read -r response
+    else
+        response="N"
+    fi
 
     if [[ "$response" =~ ^[Yy]$ ]]; then
         # Backup

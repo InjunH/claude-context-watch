@@ -23,6 +23,14 @@ print_banner() {
     echo ""
 }
 
+# Progress indicator
+TOTAL_STEPS=4
+CURRENT_STEP=0
+progress() {
+    CURRENT_STEP=$((CURRENT_STEP + 1))
+    printf "\033[1;34m[%d/%d]\033[0m %s\n" "$CURRENT_STEP" "$TOTAL_STEPS" "$1"
+}
+
 check_dependencies() {
     printf "Checking dependencies...\n"
 
@@ -52,15 +60,28 @@ check_dependencies() {
 }
 
 install_files() {
-    printf "Installing files...\n"
+    printf "This installation requires sudo privileges.\n"
+    printf "You may be prompted for your password.\n\n"
+
+    # Get script directory and normalize path
+    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    SCRIPT_DIR="$(realpath "$SCRIPT_DIR" 2>/dev/null || echo "$SCRIPT_DIR")"
+
+    # Verify source files exist before installation
+    if [ ! -f "$SCRIPT_DIR/bin/claude-context-watch" ]; then
+        printf "  ${RED}✗${NC} Source file not found: $SCRIPT_DIR/bin/claude-context-watch\n"
+        exit 1
+    fi
+    if [ ! -d "$SCRIPT_DIR/lib" ] || [ -z "$(ls -A "$SCRIPT_DIR/lib/"*.sh 2>/dev/null)" ]; then
+        printf "  ${RED}✗${NC} Source directory not found or empty: $SCRIPT_DIR/lib/\n"
+        exit 1
+    fi
 
     # Create directories
     sudo mkdir -p "$INSTALL_DIR"
     sudo mkdir -p "$SHARE_DIR"
     mkdir -p "$CLAUDE_DIR"
-
-    # Get script directory
-    SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    chmod 700 "$CLAUDE_DIR"
 
     # Install main binary
     sudo cp "$SCRIPT_DIR/bin/claude-context-watch" "$INSTALL_DIR/"
@@ -97,8 +118,21 @@ configure_statusline() {
         # Merge statusLine setting
         local updated
         updated=$(jq --argjson sl "$statusline_config" '.statusLine = $sl' "$settings_file")
-        echo "$updated" > "$settings_file"
-        printf "  ${GREEN}✓${NC} Updated settings.json\n"
+        if [ -n "$updated" ]; then
+            local temp_file
+            temp_file=$(mktemp)
+            if echo "$updated" > "$temp_file" && [ -s "$temp_file" ]; then
+                mv "$temp_file" "$settings_file"
+                printf "  ${GREEN}✓${NC} Updated settings.json\n"
+            else
+                rm -f "$temp_file"
+                printf "  ${RED}✗${NC} Failed to update settings.json\n"
+                exit 1
+            fi
+        else
+            printf "  ${RED}✗${NC} Failed to update settings.json\n"
+            exit 1
+        fi
     else
         # Create new settings file
         echo "{\"statusLine\":$statusline_config}" | jq '.' > "$settings_file"
@@ -124,7 +158,11 @@ print_success() {
 
 # Main
 print_banner
+progress "Checking dependencies..."
 check_dependencies
+progress "Installing files..."
 install_files
+progress "Configuring StatusLine..."
 configure_statusline
+progress "Finishing up..."
 print_success

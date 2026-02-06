@@ -4,11 +4,24 @@
 #
 # Input: JSON data via stdin with context_window, cost, model info
 # Output: Status text to stdout (displayed in Claude Code terminal)
-# Side effect: Saves full data to /tmp/claude-context.json for external monitoring
+# Side effect: Saves full data to ~/.claude/context.json for external monitoring
 
 set -e
 
-CONTEXT_FILE="${CLAUDE_CONTEXT_FILE:-/tmp/claude-context.json}"
+CONTEXT_FILE="${CLAUDE_CONTEXT_FILE:-${HOME}/.claude/context.json}"
+
+# Security: Ensure directory exists with proper permissions
+CONTEXT_DIR="$(dirname "$CONTEXT_FILE")"
+if [ ! -d "$CONTEXT_DIR" ]; then
+    mkdir -p "$CONTEXT_DIR"
+    chmod 700 "$CONTEXT_DIR"
+fi
+
+# Security: Check for symlink attacks
+if [ -L "$CONTEXT_FILE" ]; then
+    echo "⚠️ Security: symlink detected"
+    exit 1
+fi
 
 # Read JSON from stdin
 read_input() {
@@ -17,7 +30,11 @@ read_input() {
 
 # Format token count (e.g., 15234 -> "15.2k")
 format_tokens() {
-    local tokens=$1
+    local tokens="${1:-0}"
+    if ! [[ "$tokens" =~ ^[0-9]+$ ]]; then
+        echo "0"
+        return
+    fi
     if [ "$tokens" -ge 1000 ]; then
         printf "%.1fk" "$(echo "scale=1; $tokens / 1000" | bc 2>/dev/null || echo "$((tokens / 1000))")"
     else
@@ -46,7 +63,7 @@ main() {
 
     # Validate JSON
     if ! echo "$input" | jq -e . >/dev/null 2>&1; then
-        echo "⚠️ Invalid data"
+        echo "⚠️ Invalid JSON from Claude Code"
         exit 0
     fi
 
@@ -54,20 +71,24 @@ main() {
     local timestamp
     timestamp=$(date '+%Y-%m-%dT%H:%M:%S')
 
+    # Write with secure permissions (owner read/write only)
+    umask 077
     echo "$input" | jq --arg ts "$timestamp" '. + {timestamp: $ts}' > "$CONTEXT_FILE" 2>/dev/null || true
+    chmod 600 "$CONTEXT_FILE" 2>/dev/null || true
 
-    # Extract values
-    local used_pct total_input context_size cost model_name
-    used_pct=$(echo "$input" | jq -r '.context_window.used_percentage // 0' | cut -d. -f1)
-    total_input=$(echo "$input" | jq -r '.context_window.total_input_tokens // 0')
-    context_size=$(echo "$input" | jq -r '.context_window.context_window_size // 200000')
-    cost=$(echo "$input" | jq -r '.cost.total_cost_usd // 0')
-    model_name=$(echo "$input" | jq -r '.model.display_name // "Claude"')
-
-    # Cache info
-    local cache_creation cache_read
-    cache_creation=$(echo "$input" | jq -r '.context_window.current_usage.cache_creation_input_tokens // 0')
-    cache_read=$(echo "$input" | jq -r '.context_window.current_usage.cache_read_input_tokens // 0')
+    # Extract all values in a single jq call
+    local used_pct total_input context_size cost model_name cache_creation cache_read
+    read -r used_pct total_input context_size cost model_name cache_creation cache_read < <(
+        echo "$input" | jq -r '[
+            (.context_window.used_percentage // 0 | floor),
+            (.context_window.total_input_tokens // 0),
+            (.context_window.context_window_size // 200000),
+            (.cost.total_cost_usd // 0),
+            (.model.display_name // "Claude"),
+            (.context_window.current_usage.cache_creation_input_tokens // 0),
+            (.context_window.current_usage.cache_read_input_tokens // 0)
+        ] | @tsv' 2>/dev/null
+    ) || { used_pct=0; total_input=0; context_size=200000; cost=0; model_name="Claude"; cache_creation=0; cache_read=0; }
 
     # Format values
     local input_fmt context_fmt
