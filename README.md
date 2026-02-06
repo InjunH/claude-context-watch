@@ -1,4 +1,5 @@
 # Claude Context Watch
+<img width="1018" height="932" alt="CleanShot 2026-02-06 at 15 30 35@2x" src="https://github.com/user-attachments/assets/d43cd6ec-678f-4eb0-a350-d3a8c4a1708b" />
 
 Claude Code의 컨텍스트 윈도우 사용량을 실시간으로 모니터링하는 CLI 도구입니다.
 
